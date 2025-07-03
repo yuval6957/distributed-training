@@ -1,0 +1,43 @@
+# Distributed Training Framework Configuration
+# Copy this file to config.yaml and customize for your environment
+
+network:
+  gpu_host: "192.168.1.100"    # IP address of GPU server
+  cpu_host: "192.168.1.200"    # IP address of CPU server (optional, auto-detected)
+  port: 29500                  # Communication port
+  timeout: 30                  # Connection timeout in seconds
+  retry_attempts: 3            # Number of connection retry attempts
+
+training:
+  batch_size: 64               # Default batch size
+  num_workers: 4               # Number of CPU worker processes
+  epochs: 10                   # Default number of training epochs
+  learning_rate: 0.001         # Default learning rate
+
+data:
+  shuffle: true                # Shuffle training data
+  pin_memory: true             # Pin memory for faster GPU transfer
+  persistent_workers: true     # Keep workers alive between epochs
+  prefetch_factor: 4           # Number of batches to prefetch
+
+gpu:
+  device: "auto"               # "auto", "cuda", "cpu"
+  mixed_precision: false       # Use automatic mixed precision
+  compile_model: false         # Use torch.compile (requires PyTorch 2.0+)
+
+monitoring:
+  progress_bars: true          # Show tqdm progress bars
+  log_level: "INFO"            # Logging level: DEBUG, INFO, WARNING, ERROR
+  save_logs: false             # Save logs to file
+  log_file: "training.log"     # Log file name
+
+colab:
+  ngrok_auth_token: null       # ngrok auth token for stable tunnels
+  tunnel_region: "us"          # ngrok tunnel region: us, eu, ap, au, sa, jp, in
+
+# Advanced settings
+advanced:
+  flow_control: true           # Enable adaptive flow control
+  queue_size_limit: 200        # Maximum queue size for batch processing
+  memory_threshold: 0.8        # Memory usage threshold for flow control
+  heartbeat_interval: 5        # Heartbeat interval in seconds
