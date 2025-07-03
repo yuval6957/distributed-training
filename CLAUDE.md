@@ -8,6 +8,8 @@ This is a **Distributed Training Framework** for machine learning that enables C
 
 **Complete ML Lifecycle Support**: The framework now supports training, validation, and inference with memory-efficient configurations for large datasets including images.
 
+**Integrated Training with Validation**: Standard ML workflow with automatic train/validation split, per-epoch validation, and early stopping to prevent overfitting.
+
 ## Architecture
 
 ### Core Components
@@ -40,11 +42,15 @@ pip install -r requirements.txt
 
 #### Training
 ```bash
+# Basic training
 # On GPU server (example: 192.168.1.100)
 python examples/train_gpu.py
 
-# On CPU server (example: 192.168.1.200)
+# On CPU server (example: 192.168.1.200)  
 python examples/train_cpu.py
+
+# Training with integrated validation
+python examples/train_with_validation_cpu.py
 
 # Google Colab example
 python examples/colab_gpu_example.py  # In Colab

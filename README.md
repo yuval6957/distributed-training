@@ -6,6 +6,8 @@ A **Distributed Training Framework** for machine learning that enables CPU/GPU s
 
 - **CPU/GPU Split Architecture**: Separate data loading and model operations across different machines
 - **Complete ML Lifecycle**: Training, validation, and inference support
+- **Integrated Training with Validation**: Automatic train/validation split with per-epoch validation
+- **Early Stopping**: Prevent overfitting with configurable early stopping
 - **Memory-Efficient Inference**: Configurable data transfer for large datasets (images, etc.)
 - **Network-based Communication**: Robust networking with adaptive flow control
 - **Google Colab Support**: Train using Colab's free GPU with your local data
@@ -151,13 +153,25 @@ network_config = config.get_network_config()
 
 loader = CPULoader(num_workers=config.get('training.num_workers'))
 dataset = MyDataset()
-loader.setup_dataset(dataset, batch_size=config.get('training.batch_size'))
+loader.setup_dataset(
+    dataset, 
+    batch_size=config.get('training.batch_size'),
+    val_split=0.2  # Use 20% for validation (optional)
+)
+
+# Optional: Configure early stopping
+early_stopping = {
+    'monitor': 'val_loss',    # or 'val_accuracy'
+    'patience': 5,            # stop after 5 epochs without improvement
+    'min_delta': 0.001        # minimum change to count as improvement
+}
 
 # Start loading (connects to GPU server)
-loader.start_loading(
+results = loader.start_loading(
     gpu_host=network_config['gpu_host'],
     gpu_port=network_config['port'],
-    epochs=config.get('training.epochs')
+    epochs=config.get('training.epochs'),
+    early_stopping=early_stopping  # Enable early stopping (optional)
 )
 ```
 
@@ -211,7 +225,70 @@ loader.start_loading(
 )
 ```
 
-### Validation
+### Integrated Training with Validation
+
+The framework supports the standard ML workflow where training and validation happen together:
+
+**CPU Server Setup:**
+```python
+# examples/train_with_validation_cpu.py
+from distributed_training import CPULoader
+
+loader = CPULoader()
+
+# Setup dataset with automatic train/validation split
+loader.setup_dataset(
+    dataset=your_dataset,
+    batch_size=64,
+    val_split=0.2,  # 80% training, 20% validation
+    shuffle=True
+)
+
+# Configure early stopping to prevent overfitting
+early_stopping = {
+    'monitor': 'val_loss',      # Monitor validation loss
+    'patience': 5,              # Stop after 5 epochs without improvement
+    'min_delta': 0.001          # Minimum improvement threshold
+}
+
+# Start training with integrated validation
+results = loader.start_loading(
+    gpu_host='192.168.1.100',
+    epochs=50,
+    early_stopping=early_stopping
+)
+
+# Access training history
+print(f"Final validation accuracy: {results['val_accuracy'][-1]:.4f}")
+print(f"Best validation loss: {min(results['val_loss']):.4f}")
+```
+
+**What happens during training:**
+1. 🔥 **Train** on 80% of data (one epoch)
+2. 📊 **Validate** on 20% of data 
+3. 📈 **Track** training vs validation metrics
+4. ⏹️ **Early stop** if validation performance plateaus
+5. 🔄 **Repeat** until convergence or max epochs
+
+**Training output:**
+```
+============================================================
+🔄 EPOCH 1/50
+============================================================
+🔥 Training: 100%|████████| 625/625 [01:23<00:00, 7.5it/s]
+
+📊 Running validation...
+🔍 Validating: 100%|████████| 157/157 [00:15<00:00, 10.2it/s]
+
+📈 Epoch 1 Summary:
+   - Train Loss: 0.8234
+   - Val Loss: 0.7891
+   - Val Accuracy: 0.6234
+
+✅ New best validation loss: 0.7891
+```
+
+### Standalone Validation
 
 **On GPU Server:**
 ```python
@@ -358,7 +435,9 @@ python -m pytest distributed_training/tests/
 
 ### Complete ML Lifecycle
 - **Training**: Distributed model training with progress tracking
-- **Validation**: Model evaluation with comprehensive metrics
+- **Integrated Training+Validation**: Standard ML workflow with automatic train/validation split
+- **Early Stopping**: Prevent overfitting with configurable patience and monitoring
+- **Standalone Validation**: Model evaluation with comprehensive metrics
 - **Inference**: Memory-efficient batch prediction
 
 ### Memory Optimization
@@ -410,6 +489,12 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 3. **Workers**: Use 4-8 CPU workers for optimal throughput
 4. **Preprocessing**: Keep preprocessing lightweight to avoid bottlenecks
 
+### Training with Validation
+1. **Use validation split**: `val_split=0.2` for 80/20 train/validation split
+2. **Configure early stopping**: Prevent overfitting with patience and monitoring
+3. **Monitor both metrics**: Track both validation loss and accuracy
+4. **Save training curves**: Use returned results for analysis
+
 ### Memory-Efficient Inference
 1. **Use top-k instead of full probabilities**: 50x memory savings
 2. **Set confidence thresholds**: Filter low-confidence predictions
@@ -417,8 +502,9 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 4. **Monitor memory usage**: Framework provides estimates
 
 ### Examples
-- **Training**: `examples/train_*.py`
-- **Validation**: `examples/validate_*.py`
+- **Basic Training**: `examples/train_*.py`
+- **Training with Validation**: `examples/train_with_validation_cpu.py`
+- **Standalone Validation**: `examples/validate_*.py`
 - **Inference**: `examples/inference_*.py`
 - **Image Processing**: `examples/image_inference_example.py`
 

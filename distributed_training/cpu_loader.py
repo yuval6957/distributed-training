@@ -33,18 +33,23 @@ class CPULoader:
         self.dataloader = None
         self.preprocessor = None
     
-    def setup_dataset(self, dataset, batch_size=64, shuffle=True, preprocessing_fn=None):
+    def setup_dataset(self, dataset, batch_size=64, shuffle=True, preprocessing_fn=None, 
+                      val_split=0.0, val_dataset=None):
         """
-        Setup your dataset and preprocessing
+        Setup your dataset and preprocessing with optional train/validation split
         
         Args:
             dataset: Your PyTorch dataset or data path
             batch_size: Batch size for training
             shuffle: Whether to shuffle data
             preprocessing_fn: Optional preprocessing function
+            val_split: Fraction of data to use for validation (0.0-1.0)
+            val_dataset: Optional separate validation dataset
         """
         self.dataset = dataset
         self.preprocessor = preprocessing_fn
+        self.val_split = val_split
+        self.val_dataset = val_dataset
         
         # Handle different dataset types
         if isinstance(dataset, str):
@@ -56,7 +61,27 @@ class CPULoader:
         elif not isinstance(dataset, Dataset):
             raise ValueError("Dataset must be a PyTorch Dataset, file path, or (X, y) tuple")
         
-        # Create DataLoader
+        # Handle train/validation split
+        if val_split > 0.0 and val_dataset is None:
+            # Split the dataset
+            total_size = len(self.dataset)
+            val_size = int(total_size * val_split)
+            train_size = total_size - val_size
+            
+            # Create random split
+            import torch
+            train_dataset, val_dataset = torch.utils.data.random_split(
+                self.dataset, [train_size, val_size]
+            )
+            
+            self.dataset = train_dataset  # Use only training portion
+            self.val_dataset = val_dataset
+            
+            print(f"🔀 Dataset split:")
+            print(f"   - Training: {train_size:,} samples ({(1-val_split)*100:.1f}%)")
+            print(f"   - Validation: {val_size:,} samples ({val_split*100:.1f}%)")
+        
+        # Create training DataLoader
         self.dataloader = DataLoader(
             self.dataset,
             batch_size=batch_size,
@@ -67,15 +92,30 @@ class CPULoader:
             prefetch_factor=4 if self.num_workers > 0 else 2
         )
         
+        # Create validation DataLoader if validation data exists
+        if self.val_dataset is not None:
+            self.val_dataloader = DataLoader(
+                self.val_dataset,
+                batch_size=batch_size * 2,  # Larger batch for validation
+                shuffle=False,  # Don't shuffle validation
+                num_workers=self.num_workers,
+                pin_memory=True,
+                persistent_workers=True if self.num_workers > 0 else False
+            )
+        else:
+            self.val_dataloader = None
+        
         print(f"✅ Dataset setup complete:")
-        print(f"   - Samples: {len(self.dataset):,}")
+        print(f"   - Training samples: {len(self.dataset):,}")
+        if self.val_dataset:
+            print(f"   - Validation samples: {len(self.val_dataset):,}")
         print(f"   - Batch size: {batch_size}")
         print(f"   - Batches per epoch: {len(self.dataloader):,}")
         print(f"   - Workers: {self.num_workers}")
         if preprocessing_fn:
             print(f"   - Preprocessing: {preprocessing_fn.__name__}")
     
-    def start_loading(self, gpu_host, epochs=10, gpu_port=29500):
+    def start_loading(self, gpu_host, epochs=10, gpu_port=29500, early_stopping=None):
         """
         Start distributed data loading - sends data to GPU server
         
@@ -83,6 +123,7 @@ class CPULoader:
             gpu_host: IP address of the GPU server
             epochs: Number of training epochs
             gpu_port: Port of the GPU server
+            early_stopping: Dict with early stopping config (patience, min_delta, monitor)
         """
         if self.dataset is None:
             raise ValueError("Must call setup_dataset() first!")
@@ -90,13 +131,20 @@ class CPULoader:
         print(f"🌐 Starting CPU data master, connecting to GPU at {gpu_host}:{gpu_port}")
         print(f"🔄 Training for {epochs} epochs")
         
+        if self.val_dataset is not None:
+            print("📊 Integrated training with validation enabled")
+            if early_stopping:
+                print(f"⏹️  Early stopping: patience={early_stopping.get('patience', 5)}")
+        
         # Create the master with our dataset
-        self.master = CustomCPUMaster(
+        self.master = TrainingWithValidationMaster(
             gpu_host=gpu_host,
             gpu_port=gpu_port,
             num_workers=self.num_workers,
-            dataloader=self.dataloader,
-            preprocessor=self.preprocessor
+            train_dataloader=self.dataloader,
+            val_dataloader=self.val_dataloader,
+            preprocessor=self.preprocessor,
+            early_stopping=early_stopping
         )
         
         try:
@@ -107,8 +155,9 @@ class CPULoader:
             if test_response.get('status') == 'success':
                 print("✅ Successfully connected to GPU server")
                 
-                # Start training
-                self.master.train_epochs(epochs)
+                # Start training with validation
+                results = self.master.train_epochs_with_validation(epochs)
+                return results
                 
             else:
                 print(f"❌ Failed to connect to GPU server: {test_response}")
@@ -275,9 +324,249 @@ class SimpleDataset(Dataset):
         return self.X[idx], self.y[idx]
 
 
+class TrainingWithValidationMaster(CPUDataMaster):
+    """
+    CPU master that integrates training with per-epoch validation
+    """
+    
+    def __init__(self, gpu_host, gpu_port, num_workers, train_dataloader, val_dataloader=None, 
+                 preprocessor=None, early_stopping=None):
+        self.train_dataloader = train_dataloader
+        self.val_dataloader = val_dataloader
+        self.preprocessor = preprocessor
+        
+        # Early stopping configuration
+        self.early_stopping = early_stopping or {}
+        self.best_val_loss = float('inf')
+        self.best_val_acc = 0.0
+        self.patience_counter = 0
+        self.training_history = {
+            'train_loss': [],
+            'val_loss': [],
+            'val_accuracy': [],
+            'epochs': []
+        }
+        
+        # Initialize parent
+        super().__init__(gpu_host, gpu_port, num_workers)
+    
+    def train_epochs_with_validation(self, epochs):
+        """Train with integrated validation after each epoch"""
+        print("🚀 Starting training with integrated validation")
+        
+        try:
+            from tqdm import tqdm
+        except ImportError:
+            # Fallback tqdm implementation
+            class tqdm:
+                def __init__(self, *args, **kwargs):
+                    self.total = kwargs.get('total', 0)
+                    self.n = 0
+                    self.desc = kwargs.get('desc', '')
+                def update(self, n=1):
+                    self.n += n
+                    print(f"{self.desc}: {self.n}/{self.total}")
+                def set_postfix(self, *args, **kwargs):
+                    pass
+                def close(self):
+                    pass
+                @staticmethod
+                def write(msg):
+                    print(msg)
+        
+        # Setup overall progress tracking
+        epoch_pbar = tqdm(
+            total=epochs,
+            desc="🎯 Training Progress",
+            position=0,
+            leave=True
+        )
+        
+        # Start background threads for batch processing
+        import threading
+        processor_thread = threading.Thread(target=self.batch_processor, daemon=True)
+        sender_thread = threading.Thread(target=self.gpu_sender, daemon=True)
+        
+        processor_thread.start()
+        sender_thread.start()
+        
+        try:
+            for epoch in range(epochs):
+                print(f"\n{'='*60}")
+                print(f"🔄 EPOCH {epoch + 1}/{epochs}")
+                print('='*60)
+                
+                # 1. Training phase
+                epoch_start = time.time()
+                train_loss = self._train_one_epoch(epoch)
+                
+                # 2. Validation phase (if validation data exists)
+                val_results = None
+                if self.val_dataloader is not None:
+                    print("\n📊 Running validation...")
+                    val_results = self._validate_one_epoch()
+                    
+                    # Update training history
+                    self.training_history['train_loss'].append(train_loss)
+                    self.training_history['val_loss'].append(val_results['average_loss'])
+                    self.training_history['val_accuracy'].append(val_results['accuracy'])
+                    self.training_history['epochs'].append(epoch + 1)
+                    
+                    # Print epoch summary
+                    print(f"\n📈 Epoch {epoch + 1} Summary:")
+                    print(f"   - Train Loss: {train_loss:.4f}")
+                    print(f"   - Val Loss: {val_results['average_loss']:.4f}")
+                    print(f"   - Val Accuracy: {val_results['accuracy']:.4f}")
+                    
+                    # Check for early stopping
+                    if self._should_early_stop(val_results):
+                        print(f"\n⏹️  Early stopping triggered at epoch {epoch + 1}")
+                        break
+                
+                epoch_time = time.time() - epoch_start
+                self.stats['total_epochs'] += 1
+                
+                # Update progress bar
+                epoch_pbar.update(1)
+                postfix = {'Train Loss': f"{train_loss:.4f}"}
+                if val_results:
+                    postfix.update({
+                        'Val Loss': f"{val_results['average_loss']:.4f}",
+                        'Val Acc': f"{val_results['accuracy']:.4f}"
+                    })
+                epoch_pbar.set_postfix(postfix)
+                
+        finally:
+            epoch_pbar.close()
+            
+            # Final summary
+            print(f"\n{'='*60}")
+            print("🏁 TRAINING COMPLETED")
+            print('='*60)
+            self.print_training_summary()
+        
+        return self.training_history
+    
+    def _train_one_epoch(self, epoch):
+        """Train for one epoch and return average loss"""
+        epoch_losses = []
+        batch_count = 0
+        
+        train_pbar = tqdm(
+            total=len(self.train_dataloader),
+            desc="🔥 Training",
+            position=1,
+            leave=False
+        )
+        
+        try:
+            for batch_data, batch_targets in self.train_dataloader:
+                # Apply preprocessing if provided
+                if self.preprocessor:
+                    batch_data, batch_targets = self.preprocessor(batch_data, batch_targets)
+                
+                # Send training batch to GPU
+                metadata = {
+                    'epoch': epoch,
+                    'batch_id': batch_count,
+                    'augment': True,
+                    'normalize': True
+                }
+                
+                # Queue the batch for processing
+                try:
+                    self.batch_queue.put((batch_data, batch_targets, metadata), timeout=5.0)
+                except queue.Full:
+                    tqdm.write("⏳ Batch queue full, waiting...")
+                    self.batch_queue.put((batch_data, batch_targets, metadata))
+                
+                batch_count += 1
+                train_pbar.update(1)
+                
+                # Periodically check GPU stats
+                if batch_count % 10 == 0:
+                    gpu_stats = self.get_gpu_stats()
+                    if gpu_stats:
+                        recent_results = gpu_stats.get('recent_results', [])
+                        if recent_results:
+                            recent_loss = recent_results[-1].get('loss', 0.0)
+                            epoch_losses.append(recent_loss)
+                            train_pbar.set_postfix({'Loss': f"{recent_loss:.4f}"})
+        
+        finally:
+            train_pbar.close()
+        
+        # Return average training loss for this epoch
+        return sum(epoch_losses) / len(epoch_losses) if epoch_losses else 0.0
+    
+    def _validate_one_epoch(self):
+        """Run validation for current epoch"""
+        return self.validate_dataset(self.val_dataloader, show_progress=True)
+    
+    def _should_early_stop(self, val_results):
+        """Check if training should stop early based on validation results"""
+        if not self.early_stopping:
+            return False
+        
+        monitor = self.early_stopping.get('monitor', 'val_loss')
+        patience = self.early_stopping.get('patience', 5)
+        min_delta = self.early_stopping.get('min_delta', 0.001)
+        
+        current_val_loss = val_results['average_loss']
+        current_val_acc = val_results['accuracy']
+        
+        if monitor == 'val_loss':
+            # Lower is better for loss
+            if current_val_loss < (self.best_val_loss - min_delta):
+                self.best_val_loss = current_val_loss
+                self.patience_counter = 0
+                print(f"✅ New best validation loss: {current_val_loss:.4f}")
+                return False
+            else:
+                self.patience_counter += 1
+        
+        elif monitor == 'val_accuracy':
+            # Higher is better for accuracy
+            if current_val_acc > (self.best_val_acc + min_delta):
+                self.best_val_acc = current_val_acc
+                self.patience_counter = 0
+                print(f"✅ New best validation accuracy: {current_val_acc:.4f}")
+                return False
+            else:
+                self.patience_counter += 1
+        
+        if self.patience_counter >= patience:
+            return True
+        
+        print(f"⏳ No improvement for {self.patience_counter}/{patience} epochs")
+        return False
+    
+    def print_training_summary(self):
+        """Print comprehensive training summary"""
+        history = self.training_history
+        if not history['epochs']:
+            print("No training history available")
+            return
+        
+        print(f"📊 Training Summary:")
+        print(f"   - Epochs completed: {len(history['epochs'])}")
+        print(f"   - Final train loss: {history['train_loss'][-1]:.4f}")
+        
+        if history['val_loss']:
+            print(f"   - Final val loss: {history['val_loss'][-1]:.4f}")
+            print(f"   - Final val accuracy: {history['val_accuracy'][-1]:.4f}")
+            print(f"   - Best val loss: {min(history['val_loss']):.4f}")
+            print(f"   - Best val accuracy: {max(history['val_accuracy']):.4f}")
+        
+        # Print basic stats from parent
+        runtime = time.time() - self.stats['start_time']
+        print(f"   - Total runtime: {runtime:.1f}s")
+        print(f"   - Batches sent: {self.stats['batches_sent']}")
+
+
 class CustomCPUMaster(CPUDataMaster):
     """
-    Custom CPU master that uses your provided dataset
+    Custom CPU master that uses your provided dataset (legacy - for backward compatibility)
     """
     
     def __init__(self, gpu_host, gpu_port, num_workers, dataloader, preprocessor=None):

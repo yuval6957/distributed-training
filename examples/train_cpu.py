@@ -90,7 +90,8 @@ if __name__ == "__main__":
         dataset=dataset,
         batch_size=config.get('training.batch_size', 64),
         shuffle=config.get('data.shuffle', True),
-        preprocessing_fn=your_preprocessing  # Your custom preprocessing
+        preprocessing_fn=your_preprocessing,  # Your custom preprocessing
+        val_split=0.2  # Use 20% for validation (optional)
     )
     
     # 4. Start distributed data loading with beautiful progress tracking
@@ -107,8 +108,16 @@ if __name__ == "__main__":
     print(f"🌐 Connecting to GPU server: {network_config['gpu_host']}:{network_config['port']}")
     print("💡 You can change these settings in config.yaml or .env file")
     
+    # Optional: Configure early stopping
+    early_stopping = {
+        'monitor': 'val_loss',    # or 'val_accuracy'
+        'patience': 5,            # stop after 5 epochs without improvement
+        'min_delta': 0.001        # minimum change to count as improvement
+    }
+    
     loader.start_loading(
         gpu_host=network_config['gpu_host'],
         epochs=config.get('training.epochs', 5),
-        gpu_port=network_config['port']
+        gpu_port=network_config['port'],
+        early_stopping=early_stopping  # Enable early stopping (optional)
     )

@@ -6,12 +6,87 @@ This guide covers the validation and inference capabilities of the Distributed T
 
 The framework supports the complete ML lifecycle:
 - **Training**: Distributed model training across CPU/GPU servers
-- **Validation**: Model evaluation with detailed metrics
+- **Integrated Training+Validation**: Standard ML workflow with automatic train/validation split and early stopping
+- **Standalone Validation**: Model evaluation with detailed metrics
 - **Inference**: Batch prediction with memory optimization
 
-## 🔍 Validation
+## 🔄 Integrated Training with Validation
 
-Validation runs your trained model on a validation dataset and returns comprehensive metrics.
+The framework supports the standard ML workflow where training and validation happen together, preventing overfitting through early stopping.
+
+### Setup with Train/Validation Split
+
+```python
+# train_with_validation_cpu.py
+from distributed_training import CPULoader
+
+loader = CPULoader()
+
+# Automatic train/validation split
+loader.setup_dataset(
+    dataset=your_dataset,
+    batch_size=64,
+    val_split=0.2,  # 80% training, 20% validation
+    shuffle=True
+)
+
+# Configure early stopping
+early_stopping = {
+    'monitor': 'val_loss',      # Monitor validation loss
+    'patience': 5,              # Stop after 5 epochs without improvement  
+    'min_delta': 0.001          # Minimum improvement threshold
+}
+
+# Start training with integrated validation
+results = loader.start_loading(
+    gpu_host='192.168.1.100',
+    epochs=50,  # Will stop early if needed
+    early_stopping=early_stopping
+)
+```
+
+### Training Process
+
+For each epoch, the framework automatically:
+
+1. **🔥 Training Phase**: Train on 80% of data
+2. **📊 Validation Phase**: Evaluate on 20% of data
+3. **📈 Metrics Tracking**: Record train/validation metrics
+4. **⏹️ Early Stopping Check**: Stop if validation plateaus
+5. **🔄 Continue or Stop**: Proceed to next epoch or terminate
+
+### Early Stopping Configuration
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `monitor` | `'val_loss'` | Metric to monitor (`'val_loss'` or `'val_accuracy'`) |
+| `patience` | `5` | Epochs to wait before stopping |
+| `min_delta` | `0.001` | Minimum change to qualify as improvement |
+
+### Training Results
+
+```python
+{
+    'train_loss': [0.8, 0.6, 0.4, 0.35, 0.34],      # Training loss per epoch
+    'val_loss': [0.7, 0.5, 0.45, 0.46, 0.47],       # Validation loss per epoch  
+    'val_accuracy': [0.6, 0.75, 0.78, 0.77, 0.76],  # Validation accuracy per epoch
+    'epochs': [1, 2, 3, 4, 5]                        # Completed epochs
+}
+
+# Early stopping triggered after epoch 5 due to increasing validation loss
+```
+
+### Benefits
+
+- **🚫 Prevents Overfitting**: Stops training when validation performance degrades
+- **⏰ Saves Time**: No need to run full epochs if model has converged
+- **📈 Rich Metrics**: Complete training curves for analysis
+- **🎯 Optimal Model**: Automatically finds best training point
+- **🔧 Standard Practice**: Follows conventional ML workflow
+
+## 🔍 Standalone Validation
+
+For validating pre-trained models, you can run standalone validation.
 
 ### GPU Server Setup
 
