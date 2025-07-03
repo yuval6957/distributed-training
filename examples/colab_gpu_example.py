@@ -7,9 +7,10 @@ It creates an ngrok tunnel to receive data from your local CPU.
 
 Usage in Colab:
 1. Upload this file to Colab
-2. Run: !pip install pyngrok torch torchvision tqdm
-3. Run this script
-4. Copy the tunnel info and use it in your local CPU script
+2. Run: !pip install -r requirements-colab.txt
+3. Add ngrok token to Colab secrets (key: 'ngrok')
+4. Run this script
+5. Copy the TCP tunnel info and use it in your local CPU script
 """
 
 import torch
@@ -59,6 +60,19 @@ def main():
     print("🚀 Starting Colab GPU Training Setup")
     print("="*50)
     
+    # Setup ngrok authentication from Colab secrets
+    try:
+        from google.colab import userdata
+        import pyngrok
+        from pyngrok import ngrok
+        
+        ngrok_token = userdata.get('ngrok')
+        ngrok.set_auth_token(ngrok_token)
+        print("✅ ngrok authentication configured")
+    except Exception as e:
+        print(f"⚠️  ngrok setup warning: {e}")
+        print("💡 Add your ngrok token to Colab secrets with key 'ngrok'")
+    
     # Check if GPU is available
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"📱 Device: {device}")
@@ -92,7 +106,8 @@ def main():
     except Exception as e:
         print(f"❌ Training failed: {e}")
         print("💡 Common issues:")
-        print("   - Make sure pyngrok is installed: !pip install pyngrok")
+        print("   - Make sure requirements are installed: !pip install -r requirements-colab.txt")
+        print("   - Add ngrok token to Colab secrets (key: 'ngrok')")
         print("   - Check if GPU is enabled in Colab")
         print("   - Verify your local CPU script is running")
 

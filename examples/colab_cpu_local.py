@@ -29,8 +29,8 @@ from distributed_training.cpu_loader import CPULoader
 # =============================================================================
 
 # Copy these values from your Colab notebook output
-COLAB_GPU_HOST = "abc123.ngrok.io"  # UPDATE THIS from Colab
-COLAB_GPU_PORT = 443                # Usually 443 for https ngrok tunnels
+COLAB_GPU_HOST = "6.tcp.ngrok.io"   # TCP tunnel host
+COLAB_GPU_PORT = 19048              # TCP tunnel port
 
 # =============================================================================
 # YOUR LOCAL DATASET

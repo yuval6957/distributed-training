@@ -1,0 +1,11 @@
+# Requirements for Google Colab GPU Training
+# Install with: !pip install -r requirements-colab.txt
+
+torch
+torchvision
+torchaudio
+pyngrok>=7.0.0
+tqdm
+pandas
+numpy
+psutil

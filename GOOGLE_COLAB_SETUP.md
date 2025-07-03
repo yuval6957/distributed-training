@@ -30,33 +30,54 @@ This guide shows how to use **Google Colab as your GPU server** while keeping yo
 
 4. **Install Dependencies**:
    ```python
-   !pip install pyngrok torch torchvision tqdm
+   !pip install -r requirements-colab.txt
    ```
 
-5. **Run the GPU Script**:
+5. **Setup ngrok with TCP Tunnel**:
+   ```python
+   # Set up ngrok authentication using Colab secrets
+   from google.colab import userdata
+   import pyngrok
+   from pyngrok import ngrok
+   
+   # Get ngrok token from Colab secrets (add 'ngrok' secret in Colab)
+   ngrok_token = userdata.get('ngrok')
+   ngrok.set_auth_token(ngrok_token)
+   
+   # Create TCP tunnel for port 29500
+   tcp_tunnel = ngrok.connect(29500, "tcp")
+   print(f"✅ TCP tunnel created: {tcp_tunnel.public_url}")
+   
+   # Extract host and port from TCP tunnel URL
+   tunnel_parts = tcp_tunnel.public_url.replace('tcp://', '').split(':')
+   tunnel_host = tunnel_parts[0]
+   tunnel_port = int(tunnel_parts[1])
+   
+   print(f"🌐 Use these values in your local script:")
+   print(f"   COLAB_GPU_HOST = '{tunnel_host}'")
+   print(f"   COLAB_GPU_PORT = {tunnel_port}")
+   ```
+
+6. **Run the GPU Script**:
    ```python
    # Copy and run the code from examples/colab_gpu_example.py
    exec(open('examples/colab_gpu_example.py').read())
    ```
 
-6. **Copy the Tunnel URL**: The output will show something like:
+7. **Copy the TCP Tunnel Values**: Use the TCP tunnel values from step 5:
    ```
-   ====================================================================
-   🏠 INSTRUCTIONS FOR YOUR LOCAL COMPUTER:
-   ====================================================================
-   1. Copy and paste this into your local CPU script:
-   
-      COLAB_GPU_HOST = 'abc123.ngrok.io'
-      COLAB_GPU_PORT = 443
+   🌐 Use these values in your local script:
+      COLAB_GPU_HOST = '6.tcp.ngrok.io'
+      COLAB_GPU_PORT = 19048
    ```
 
 ### Step 2: Setup Your Local Computer (CPU Server)
 
 1. **Update Connection Settings**: Edit `examples/colab_cpu_local.py`:
    ```python
-   # Update these lines with values from Colab
-   COLAB_GPU_HOST = "abc123.ngrok.io"  # From Colab output
-   COLAB_GPU_PORT = 443                # From Colab output
+   # Update these lines with TCP tunnel values from Colab
+   COLAB_GPU_HOST = "6.tcp.ngrok.io"   # TCP tunnel host from Colab
+   COLAB_GPU_PORT = 19048              # TCP tunnel port from Colab
    ```
 
 2. **Setup Your Dataset**: Replace the synthetic data with your actual dataset:
@@ -83,7 +104,7 @@ This guide shows how to use **Google Colab as your GPU server** while keeping yo
 
 ```python
 # Cell 1: Setup environment
-!pip install pyngrok torch torchvision tqdm
+!pip install -r requirements-colab.txt
 
 # Cell 2: Clone your repository
 !git clone https://github.com/yuval6957/distributed-training.git
@@ -125,15 +146,20 @@ trainer = quick_colab_setup(
 trainer.start_training_with_tunnel()
 ```
 
-#### 2. ngrok Setup (Optional - for persistent tunnels)
+#### 2. ngrok Setup (Required for TCP Tunnels)
 
-For more stable connections, you can get a free ngrok account:
+For TCP tunnels, you need a free ngrok account:
 
 1. **Sign up**: Go to [ngrok.com](https://ngrok.com) and create a free account
 2. **Get your auth token**: Dashboard → Your Authtoken
-3. **Use in Colab**:
+3. **Add to Colab Secrets**: 
+   - Click the key icon in Colab sidebar
+   - Add secret with name: `ngrok`
+   - Value: your auth token
+4. **Use in Colab**:
    ```python
-   trainer = ColabGPUTrainer(ngrok_auth_token="your_auth_token_here")
+   from google.colab import userdata
+   ngrok_token = userdata.get('ngrok')
    ```
 
 ### Local Computer Detailed Setup
