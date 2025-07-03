@@ -19,7 +19,7 @@ import os
 
 # Add the distributed_training package to path
 # Adjust this path based on where you place the package in Colab
-sys.path.append('/content/oil-spill')  # If you clone the repo to /content/oil-spill
+sys.path.append('/content/distributed-training')  # If you clone the repo to /content/distributed-training
 
 from distributed_training.colab_gpu_trainer import ColabGPUTrainer, quick_colab_setup
 

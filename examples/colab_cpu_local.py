@@ -20,7 +20,7 @@ import os
 
 # Add the distributed_training package to path
 # Adjust this path to where your project is located
-sys.path.append('/path/to/your/oil-spill-project')  # UPDATE THIS PATH
+sys.path.append('/path/to/your/distributed-training-project')  # UPDATE THIS PATH
 
 from distributed_training.cpu_loader import CPULoader
 

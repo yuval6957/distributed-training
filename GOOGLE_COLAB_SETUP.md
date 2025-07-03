@@ -21,7 +21,7 @@ This guide shows how to use **Google Colab as your GPU server** while keeping yo
 3. **Upload Your Code**:
    ```python
    # Option A: Clone from GitHub
-   !git clone https://github.com/yourusername/distributed-training.git
+   !git clone https://github.com/yuval6957/distributed-training.git
    %cd distributed-training
    
    # Option B: Upload files manually
@@ -86,12 +86,12 @@ This guide shows how to use **Google Colab as your GPU server** while keeping yo
 !pip install pyngrok torch torchvision tqdm
 
 # Cell 2: Clone your repository
-!git clone https://github.com/yourusername/oil-spill.git
-%cd oil-spill
+!git clone https://github.com/yuval6957/distributed-training.git
+%cd distributed-training
 
 # Cell 3: Import and setup
 import sys
-sys.path.append('/content/oil-spill')
+sys.path.append('/content/distributed-training')
 
 from distributed_training.colab_gpu_trainer import ColabGPUTrainer, quick_colab_setup
 import torch

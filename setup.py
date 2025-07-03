@@ -13,7 +13,7 @@ setup(
     description="A distributed training framework for machine learning with CPU/GPU split architectures",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/yourusername/distributed-training",
+    url="https://github.com/yuval6957/distributed-training",
     packages=find_packages(),
     classifiers=[
         "Development Status :: 4 - Beta",

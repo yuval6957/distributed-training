@@ -29,7 +29,7 @@ A **Distributed Training Framework** for machine learning that enables CPU/GPU s
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/distributed-training.git
+git clone https://github.com/yuval6957/distributed-training.git
 cd distributed-training
 
 # Create virtual environment
@@ -166,7 +166,7 @@ Train using Google Colab's free GPU while keeping your data local:
 **In Google Colab:**
 ```python
 !pip install pyngrok torch torchvision tqdm
-!git clone https://github.com/yourusername/distributed-training.git
+!git clone https://github.com/yuval6957/distributed-training.git
 %cd distributed-training
 
 from distributed_training import ColabGPUTrainer
