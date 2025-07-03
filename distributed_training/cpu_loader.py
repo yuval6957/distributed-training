@@ -123,6 +123,117 @@ class CPULoader:
                 self.master.cleanup()
             print("✅ CPU Loader shut down")
     
+    def run_validation(self, gpu_host, val_dataset=None, batch_size=64, gpu_port=29500):
+        """
+        Run validation on the GPU server
+        
+        Args:
+            gpu_host: IP address of the GPU server
+            val_dataset: Validation dataset (if None, uses training dataset)
+            batch_size: Batch size for validation
+            gpu_port: Port of the GPU server
+        """
+        if val_dataset is None:
+            if self.dataset is None:
+                raise ValueError("Must call setup_dataset() first or provide val_dataset!")
+            val_dataset = self.dataset
+        
+        # Create validation dataloader
+        val_dataloader = DataLoader(
+            val_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=self.num_workers,
+            pin_memory=True
+        )
+        
+        print(f"🔍 Starting validation on GPU at {gpu_host}:{gpu_port}")
+        print(f"📊 Validation samples: {len(val_dataset):,}")
+        
+        # Create master for validation
+        master = CPUDataMaster(gpu_host, gpu_port, self.num_workers)
+        
+        try:
+            # Test connection
+            test_response = master.send_message_to_gpu({'command': 'get_stats'})
+            if test_response.get('status') != 'success':
+                raise ConnectionError(f"Cannot connect to GPU server: {test_response}")
+            
+            # Run validation
+            results = master.validate_dataset(val_dataloader)
+            return results
+            
+        except Exception as e:
+            print(f"❌ Validation failed: {e}")
+            raise
+        finally:
+            print("✅ Validation complete")
+    
+    def run_inference(self, gpu_host, inference_dataset=None, batch_size=64, top_k=1, gpu_port=29500, 
+                     return_details=False, return_full_probabilities=False, return_raw_outputs=False, 
+                     confidence_threshold=0.0):
+        """
+        Run inference on the GPU server with configurable output options
+        
+        Args:
+            gpu_host: IP address of the GPU server
+            inference_dataset: Dataset for inference (if None, uses training dataset)
+            batch_size: Batch size for inference
+            top_k: Return top-k predictions
+            gpu_port: Port of the GPU server
+            return_details: Whether to return detailed batch results
+            return_full_probabilities: Whether to return full probability matrices (memory intensive!)
+            return_raw_outputs: Whether to return raw model outputs (memory intensive!)
+            confidence_threshold: Filter predictions by confidence threshold
+        """
+        if inference_dataset is None:
+            if self.dataset is None:
+                raise ValueError("Must call setup_dataset() first or provide inference_dataset!")
+            inference_dataset = self.dataset
+        
+        # Create inference dataloader
+        inference_dataloader = DataLoader(
+            inference_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=self.num_workers,
+            pin_memory=True
+        )
+        
+        print(f"🔮 Starting inference on GPU at {gpu_host}:{gpu_port}")
+        print(f"📊 Inference samples: {len(inference_dataset):,}")
+        
+        # Show memory warning for large data requests
+        if return_full_probabilities or return_raw_outputs:
+            print("⚠️  WARNING: Requesting full probabilities/raw outputs may use significant memory!")
+            print("   Consider using top_k predictions instead for large datasets")
+        
+        # Create master for inference
+        master = CPUDataMaster(gpu_host, gpu_port, self.num_workers)
+        
+        try:
+            # Test connection
+            test_response = master.send_message_to_gpu({'command': 'get_stats'})
+            if test_response.get('status') != 'success':
+                raise ConnectionError(f"Cannot connect to GPU server: {test_response}")
+            
+            # Run inference with configurable options
+            results = master.run_inference(
+                inference_dataloader, 
+                top_k=top_k, 
+                return_details=return_details,
+                return_full_probabilities=return_full_probabilities,
+                return_raw_outputs=return_raw_outputs,
+                confidence_threshold=confidence_threshold
+            )
+            return results
+            
+        except Exception as e:
+            print(f"❌ Inference failed: {e}")
+            raise
+        finally:
+            print("✅ Inference complete")
+    
     def _load_from_path(self, data_path):
         """Load dataset from file path"""
         from pathlib import Path

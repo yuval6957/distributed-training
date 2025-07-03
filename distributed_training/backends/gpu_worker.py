@@ -225,6 +225,130 @@ class GPUTrainingWorker:
         
         return loss.item()
     
+    def _process_validation_batch(self, batch_data):
+        """Process a validation batch and return metrics"""
+        # Move data to device
+        data = torch.tensor(
+            batch_data['data'], 
+            dtype=torch.float32, 
+            device=self.device
+        )
+        targets = torch.tensor(
+            batch_data['targets'], 
+            dtype=torch.long, 
+            device=self.device
+        )
+        
+        # Set model to evaluation mode
+        self.model.eval()
+        
+        with torch.no_grad():
+            outputs = self.model(data)
+            
+            # Calculate loss
+            if self.criterion is not None:
+                loss = self.criterion(outputs, targets)
+            else:
+                loss = torch.nn.functional.cross_entropy(outputs, targets)
+            
+            # Calculate accuracy
+            _, predicted = torch.max(outputs.data, 1)
+            correct = (predicted == targets).sum().item()
+            total = targets.size(0)
+            accuracy = correct / total
+            
+            # Calculate top-k accuracy if applicable
+            top5_correct = 0
+            if outputs.size(1) >= 5:
+                _, top5_pred = torch.topk(outputs, 5, dim=1)
+                top5_correct = sum([targets[i] in top5_pred[i] for i in range(len(targets))])
+            
+            return {
+                'batch_id': batch_data.get('batch_id', 0),
+                'loss': loss.item(),
+                'accuracy': accuracy,
+                'correct': correct,
+                'total': total,
+                'top5_accuracy': top5_correct / total if total > 0 else 0.0
+            }
+    
+    def _process_inference_batch(self, batch_data):
+        """Process an inference batch and return predictions"""
+        # Move data to device
+        data = torch.tensor(
+            batch_data['data'], 
+            dtype=torch.float32, 
+            device=self.device
+        )
+        
+        # Set model to evaluation mode
+        self.model.eval()
+        
+        with torch.no_grad():
+            outputs = self.model(data)
+            
+            # Get predictions
+            probabilities = torch.softmax(outputs, dim=1)
+            _, predicted = torch.max(outputs.data, 1)
+            
+            # Get configuration options to control data transfer
+            return_full_probs = batch_data.get('return_full_probabilities', False)
+            return_raw_outputs = batch_data.get('return_raw_outputs', False)
+            confidence_threshold = batch_data.get('confidence_threshold', 0.0)
+            
+            # Get top-k predictions if requested
+            top_k = batch_data.get('top_k', 1)
+            top_k = min(top_k, outputs.size(1))
+            
+            result = {
+                'batch_id': batch_data.get('batch_id', 0),
+                'predictions': predicted.cpu().numpy().tolist(),
+            }
+            
+            # Add confidence scores for predictions
+            pred_confidences = []
+            for i, pred_idx in enumerate(predicted):
+                confidence = probabilities[i, pred_idx].item()
+                pred_confidences.append(confidence)
+            result['confidences'] = pred_confidences
+            
+            # Optionally include top-k predictions (more memory efficient than full probs)
+            if top_k > 1:
+                top_k_probs, top_k_indices = torch.topk(probabilities, top_k, dim=1)
+                result['top_k_predictions'] = {
+                    'indices': top_k_indices.cpu().numpy().tolist(),
+                    'probabilities': top_k_probs.cpu().numpy().tolist()
+                }
+            
+            # Only include full probabilities if explicitly requested
+            if return_full_probs:
+                result['probabilities'] = probabilities.cpu().numpy().tolist()
+            
+            # Only include raw outputs if explicitly requested (for advanced use cases)
+            if return_raw_outputs:
+                result['raw_outputs'] = outputs.cpu().numpy().tolist()
+            
+            # Filter by confidence threshold if specified
+            if confidence_threshold > 0.0:
+                high_conf_mask = [conf >= confidence_threshold for conf in pred_confidences]
+                result['high_confidence_mask'] = high_conf_mask
+                result['high_confidence_count'] = sum(high_conf_mask)
+            
+            # Add memory usage info for monitoring
+            result['memory_info'] = {
+                'batch_size': len(predicted),
+                'num_classes': outputs.size(1),
+                'data_returned': {
+                    'predictions': True,
+                    'confidences': True,
+                    'full_probabilities': return_full_probs,
+                    'raw_outputs': return_raw_outputs,
+                    'top_k': top_k if top_k > 1 else None
+                }
+            }
+            
+            return result
+    
     def stats_logger(self):
         """Background thread for summary statistics only"""
         while self.running:
@@ -293,6 +417,22 @@ class GPUTrainingWorker:
                     return {'status': 'queued'}
                 except queue.Full:
                     return {'status': 'queue_full', 'queue_size': self.batch_queue.qsize()}
+            
+            elif command == 'validate_batch':
+                # Process validation batch immediately
+                try:
+                    result = self._process_validation_batch(message)
+                    return {'status': 'success', 'result': result}
+                except Exception as e:
+                    return {'status': 'error', 'message': str(e)}
+            
+            elif command == 'inference_batch':
+                # Process inference batch immediately
+                try:
+                    result = self._process_inference_batch(message)
+                    return {'status': 'success', 'result': result}
+                except Exception as e:
+                    return {'status': 'error', 'message': str(e)}
             
             elif command == 'get_stats':
                 # Return current training statistics

@@ -272,6 +272,226 @@ class CPUDataMaster:
         print(f"⚡ Throughput: {self.stats['samples_processed'] / runtime:.1f} samples/sec")
         print("="*60)
     
+    def validate_dataset(self, dataloader, show_progress=True):
+        """Run validation on the provided dataset"""
+        print("🔍 Starting validation...")
+        
+        validation_results = []
+        total_loss = 0.0
+        total_correct = 0
+        total_samples = 0
+        
+        if show_progress:
+            progress_bar = tqdm(
+                total=len(dataloader),
+                desc="🔍 Validating",
+                position=0,
+                leave=True
+            )
+        
+        try:
+            for batch_idx, (batch_data, batch_targets) in enumerate(dataloader):
+                # Convert to numpy if needed
+                if hasattr(batch_data, 'numpy'):
+                    batch_data_np = batch_data.numpy()
+                else:
+                    batch_data_np = np.array(batch_data)
+                
+                if hasattr(batch_targets, 'numpy'):
+                    batch_targets_np = batch_targets.numpy()
+                else:
+                    batch_targets_np = np.array(batch_targets)
+                
+                # Send validation request to GPU
+                message = {
+                    'command': 'validate_batch',
+                    'data': batch_data_np,
+                    'targets': batch_targets_np,
+                    'batch_id': batch_idx
+                }
+                
+                response = self.send_message_to_gpu(message)
+                
+                if response.get('status') == 'success':
+                    result = response.get('result', {})
+                    validation_results.append(result)
+                    
+                    # Accumulate metrics
+                    total_loss += result.get('loss', 0.0)
+                    total_correct += result.get('correct', 0)
+                    total_samples += result.get('total', 0)
+                    
+                    if show_progress:
+                        current_acc = total_correct / total_samples if total_samples > 0 else 0.0
+                        progress_bar.set_postfix({
+                            'Loss': f"{total_loss/(batch_idx+1):.4f}",
+                            'Acc': f"{current_acc:.4f}"
+                        })
+                        progress_bar.update(1)
+                else:
+                    print(f"❌ Validation failed for batch {batch_idx}: {response}")
+                    
+        except Exception as e:
+            print(f"❌ Validation error: {e}")
+        finally:
+            if show_progress:
+                progress_bar.close()
+        
+        # Calculate final metrics
+        avg_loss = total_loss / len(validation_results) if validation_results else 0.0
+        accuracy = total_correct / total_samples if total_samples > 0 else 0.0
+        
+        validation_summary = {
+            'total_samples': total_samples,
+            'total_batches': len(validation_results),
+            'average_loss': avg_loss,
+            'accuracy': accuracy,
+            'detailed_results': validation_results
+        }
+        
+        print(f"✅ Validation complete:")
+        print(f"   - Samples: {total_samples:,}")
+        print(f"   - Avg Loss: {avg_loss:.4f}")
+        print(f"   - Accuracy: {accuracy:.4f}")
+        
+        return validation_summary
+    
+    def run_inference(self, dataloader, top_k=1, show_progress=True, return_details=False, 
+                     return_full_probabilities=False, return_raw_outputs=False, confidence_threshold=0.0):
+        """Run inference on the provided dataset with configurable output options"""
+        print("🔮 Starting inference...")
+        
+        inference_results = []
+        all_predictions = []
+        all_confidences = []
+        all_probabilities = [] if return_full_probabilities else None
+        
+        if show_progress:
+            progress_bar = tqdm(
+                total=len(dataloader),
+                desc="🔮 Inference",
+                position=0,
+                leave=True
+            )
+        
+        try:
+            for batch_idx, batch_data in enumerate(dataloader):
+                # Handle different data formats
+                if isinstance(batch_data, (tuple, list)):
+                    batch_data = batch_data[0]  # Take only input data, ignore targets
+                
+                # Convert to numpy if needed
+                if hasattr(batch_data, 'numpy'):
+                    batch_data_np = batch_data.numpy()
+                else:
+                    batch_data_np = np.array(batch_data)
+                
+                # Send inference request to GPU with configuration options
+                message = {
+                    'command': 'inference_batch',
+                    'data': batch_data_np,
+                    'batch_id': batch_idx,
+                    'top_k': top_k,
+                    'return_full_probabilities': return_full_probabilities,
+                    'return_raw_outputs': return_raw_outputs,
+                    'confidence_threshold': confidence_threshold
+                }
+                
+                response = self.send_message_to_gpu(message)
+                
+                if response.get('status') == 'success':
+                    result = response.get('result', {})
+                    inference_results.append(result)
+                    
+                    # Collect predictions and confidences (always returned)
+                    all_predictions.extend(result.get('predictions', []))
+                    all_confidences.extend(result.get('confidences', []))
+                    
+                    # Collect full probabilities only if requested
+                    if return_full_probabilities and 'probabilities' in result:
+                        all_probabilities.extend(result.get('probabilities', []))
+                    
+                    if show_progress:
+                        # Show memory info in progress bar
+                        memory_info = result.get('memory_info', {})
+                        data_info = memory_info.get('data_returned', {})
+                        postfix = {
+                            'Batch': f"{batch_idx+1}/{len(dataloader)}",
+                            'Classes': memory_info.get('num_classes', '?')
+                        }
+                        if confidence_threshold > 0:
+                            high_conf = result.get('high_confidence_count', 0)
+                            total_samples = memory_info.get('batch_size', 0)
+                            postfix['HighConf'] = f"{high_conf}/{total_samples}"
+                        
+                        progress_bar.set_postfix(postfix)
+                        progress_bar.update(1)
+                else:
+                    print(f"❌ Inference failed for batch {batch_idx}: {response}")
+                    
+        except Exception as e:
+            print(f"❌ Inference error: {e}")
+        finally:
+            if show_progress:
+                progress_bar.close()
+        
+        # Prepare results with memory-efficient structure
+        inference_summary = {
+            'total_samples': len(all_predictions),
+            'total_batches': len(inference_results),
+            'predictions': all_predictions,
+            'confidences': all_confidences,
+            'config': {
+                'top_k': top_k,
+                'return_full_probabilities': return_full_probabilities,
+                'return_raw_outputs': return_raw_outputs,
+                'confidence_threshold': confidence_threshold
+            }
+        }
+        
+        # Only include probabilities if they were requested and collected
+        if return_full_probabilities and all_probabilities is not None:
+            inference_summary['probabilities'] = all_probabilities
+        
+        if return_details:
+            inference_summary['detailed_results'] = inference_results
+        
+        # Calculate memory usage estimate
+        if inference_results:
+            sample_memory_info = inference_results[0].get('memory_info', {})
+            estimated_mb = self._estimate_inference_memory_usage(inference_summary, sample_memory_info)
+            inference_summary['estimated_memory_mb'] = estimated_mb
+        
+        print(f"✅ Inference complete:")
+        print(f"   - Samples: {len(all_predictions):,}")
+        print(f"   - Batches: {len(inference_results)}")
+        if 'estimated_memory_mb' in inference_summary:
+            print(f"   - Est. Memory: {inference_summary['estimated_memory_mb']:.1f} MB")
+        if confidence_threshold > 0:
+            high_conf_total = sum(r.get('high_confidence_count', 0) for r in inference_results)
+            print(f"   - High Confidence (>{confidence_threshold}): {high_conf_total:,}")
+        
+        return inference_summary
+    
+    def _estimate_inference_memory_usage(self, results, sample_memory_info):
+        """Estimate memory usage of inference results"""
+        total_samples = results['total_samples']
+        num_classes = sample_memory_info.get('num_classes', 1)
+        
+        # Base memory: predictions (int) + confidences (float)
+        base_mb = (total_samples * 4 + total_samples * 4) / 1e6  # 4 bytes each
+        
+        # Additional memory based on what was returned
+        config = results.get('config', {})
+        if config.get('return_full_probabilities', False):
+            base_mb += (total_samples * num_classes * 4) / 1e6  # Full probability matrix
+        
+        top_k = config.get('top_k', 1)
+        if top_k > 1:
+            base_mb += (total_samples * top_k * 8) / 1e6  # Top-k indices + probs
+        
+        return base_mb
+
     def shutdown_gpu(self):
         print("🛑 Sending shutdown command to GPU...")
         try:

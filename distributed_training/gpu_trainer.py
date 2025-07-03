@@ -103,6 +103,42 @@ class GPUTrainer:
                 self.worker.stop()
             print("✅ GPU Trainer shut down")
     
+    def start_service(self, mode='training'):
+        """
+        Start GPU service for training, validation, or inference
+        
+        Args:
+            mode: 'training', 'validation', or 'inference'
+        """
+        if self.model is None:
+            raise ValueError("Must call setup_model() first!")
+        
+        if mode == 'training':
+            if self.optimizer is None:
+                raise ValueError("Optimizer required for training mode")
+        
+        print(f"🚀 Starting GPU service in {mode} mode")
+        print(f"📡 Listening on port {self.port}")
+        
+        # Create and configure the worker with our model
+        self.worker = CustomGPUWorker(
+            host='0.0.0.0',
+            port=self.port,
+            model=self.model,
+            optimizer=self.optimizer if mode == 'training' else None,
+            criterion=self.criterion,
+            device=self.device
+        )
+        
+        try:
+            self.worker.start()
+        except KeyboardInterrupt:
+            print(f"🛑 {mode.capitalize()} service interrupted by user")
+        finally:
+            if self.worker:
+                self.worker.stop()
+            print(f"✅ GPU {mode.capitalize()} service shut down")
+    
     def _infer_model_config(self):
         """Try to infer model configuration"""
         if self.model is None or self.optimizer is None:
